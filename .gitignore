@@ -2,5 +2,6 @@
 *.out
 *.log
 *.sh
-*/__pychache/*
+*/__pycache/*
 *.zip
+*.xml
