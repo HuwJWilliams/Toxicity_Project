@@ -1,3 +1,6 @@
 *.csv
 *.out
 *.log
+*.sh
+*/__pychache/*
+*.zip

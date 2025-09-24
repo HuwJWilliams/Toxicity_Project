@@ -15,6 +15,8 @@ import logging as log
 from mordred import Calculator, descriptors
 import logging
 from datetime import datetime
+import joblib
+import json
 
 FILE_DIR = Path(__file__).resolve()
 PROJ_DIR = FILE_DIR.parents[2]
@@ -332,31 +334,28 @@ class TL():
         features_df: pd.DataFrame,
         targets_df: pd.DataFrame,
         rf_regressor_class,
-        hyper_params: dict = None,
-        output_csv: str = "total_performance.csv",
-        existing_performance_csv: str = None,
-        n_resamples: int = 10,
-        test_size: float = 0.3,
-        n_jobs: int = 20,
-        cv_splits: int = 5,
-        batch_size: int = 1,
-        random_seed: int = 1,
-        skip_existing: bool = True,
-        save_models: bool = False,
-        save_path: str = "./"
-    ) -> pd.DataFrame:
-        """
-        Train Random Forest models for multiple target columns using logging.
-        """
-
-        if hyper_params is None:
-            hyper_params = {
+        hyper_params: dict =  {
                 "n_estimators": [400, 500],
                 "max_features": ["sqrt"],
                 "max_depth": [25, 50, 75, 100],
                 "min_samples_split": [2, 5],
                 "min_samples_leaf": [2, 4, 8],
-            }
+            },
+        output_csv: str = "total_performance.csv",
+        existing_performance_csv: str = None,
+        n_resamples: int = 10,
+        test_size: float = 0.3,
+        cv_splits: int = 5,
+        batch_size: int = 1,
+        random_seed: int = None,
+        skip_existing: bool = True,
+        save_models: bool = False,
+        save_path: str = "./",
+        log_level=logging.DEBUG
+    ) -> pd.DataFrame:
+        """
+        Train Random Forest models for multiple target columns using logging.
+        """
 
         total_performance_df = pd.DataFrame()
 
@@ -416,7 +415,7 @@ class TL():
                     hp_search_function=GridSearchCV,
                     cv_kwargs={"n_splits": cv_splits, "shuffle": True, "random_state": random_seed},
                     hp_search_kwargs={"cv": cv_splits, "scoring": "neg_mean_squared_error"},
-                    log_level=logging.DEBUG,
+                    log_level=log_level,
                     random_seed=random_seed
                 )
 
@@ -463,6 +462,69 @@ class TL():
         self.logger.info(f"Results saved to: {output_csv}")
 
         return total_performance_df
+
+    def trainSingleTargetRFModel(
+        self,
+        data: pd.DataFrame,
+        target_column: str,
+        rf_regressor_class,
+        hyper_params: dict =  {
+                "n_estimators": [400, 500],
+                "max_features": ["sqrt"],
+                "max_depth": [25, 50, 75, 100],
+                "min_samples_split": [2, 5],
+                "min_samples_leaf": [2, 4, 8],
+            },
+        n_resamples: int = 10,
+        test_size: float = 0.3,
+        cv_splits: int = 5,
+        batch_size: int = 1,
+        random_seed: int = 1,
+        save_models: bool = False,
+        save_path: str = "./",
+        log_level=logging.DEBUG
+    ) :
+        
+        save_path = Path(save_path)
+        save_path.mkdir(parents=True, exist_ok=True)
+
+
+        rf_model = rf_regressor_class(
+            cv_function=KFold,
+            hp_search_function=GridSearchCV,
+            cv_kwargs={"n_splits": cv_splits, "shuffle": True, "random_state": random_seed},
+            hp_search_kwargs={"cv": cv_splits, "scoring": "neg_mean_squared_error"},
+            log_level=log_level,
+            random_seed=random_seed
+        )
+
+        final_model, best_params, performance_dict, feat_importance_df = rf_model.trainRFRegressor(
+            n_resamples=n_resamples,
+            data=data,
+            target_column=target_column,
+            hyperparameters=hyper_params,
+            test_size=test_size,
+            save_interval_models=False,
+            save_path=save_path,
+            save_final_model=save_models,
+            plot_feat_importance=False,
+            batch_size=batch_size,
+            n_jobs=1,
+            final_rf_seed=random_seed
+        )
+
+        joblib.dump(final_model, Path(save_path / f"{target_column}_RF_model.pkl"))
+
+        with open(Path(save_path / f"{target_column}_best_params.json"), "w") as f:
+            json.dump(best_params, f, indent=4)
+
+        with open(Path(save_path / f"{target_column}_performance_dict.json"), "w") as f:
+            json.dump(performance_dict, f, indent=4)
+
+        feat_importance_df.to_csv(Path(save_path / f"{target_column}_feature_importance.csv"), index_label="ID")
+
+        return final_model, best_params, performance_dict, feat_importance_df
+
 
     def runWorkflow(
             self,
