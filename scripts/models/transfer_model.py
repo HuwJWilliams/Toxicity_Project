@@ -1,20 +1,16 @@
 #%%
-from transformers import AutoTokenizer, AutoModel
 from sklearn.model_selection import train_test_split
 from pathlib import Path
 import torch
 import numpy as np
 from rdkit import Chem
 import pandas as pd
-import time
 import random
 import sys
 from rdkit.Chem import Descriptors
 from sklearn.model_selection import KFold, GridSearchCV
-import logging as log
 from mordred import Calculator, descriptors
 import logging
-from datetime import datetime
 import joblib
 import json
 
@@ -347,7 +343,7 @@ class TL():
         test_size: float = 0.3,
         cv_splits: int = 5,
         batch_size: int = 1,
-        random_seed: int = None,
+        random_seed: int = 1,
         skip_existing: bool = True,
         save_models: bool = False,
         save_path: str = "./",
@@ -357,16 +353,23 @@ class TL():
         Train Random Forest models for multiple target columns using logging.
         """
 
+        # Set up empty dataframe to save performances
         total_performance_df = pd.DataFrame()
+
+        completed_targets =  set()
+
+        self.logger.debug("Existing performance CSV path: existing_performance_csv")
+        existing_performance_csv = save_path / existing_performance_csv 
 
         # Load existing performance CSV
         if existing_performance_csv and Path(existing_performance_csv).exists():
             try:
+                # Reading in existing performance CSV
                 total_performance_df = pd.read_csv(existing_performance_csv, index_col=0)
+                completed_targets = {str(c).strip() for c in total_performance_df.index}                
                 self.logger.info(f"Loaded existing performance data from {existing_performance_csv}")
             except Exception as e:
                 self.logger.warning(f"Could not load existing performance CSV: {e}")
-                total_performance_df = pd.DataFrame()
 
         # Align indices
         common_indices = features_df.index.intersection(targets_df.index)
@@ -375,16 +378,24 @@ class TL():
             raise ValueError("No common indices found between features_df and targets_df")
 
         features_df = features_df.loc[common_indices]
+        self.logger.debug(f"Features DF: {features_df}")
+
         targets_df = targets_df.loc[common_indices]
+        self.logger.debug(f"Targets DF: {features_df}")
 
         self.logger.info(f"Training models for {len(targets_df.columns)} target columns")
         self.logger.info(f"Using {len(common_indices)} samples with {len(features_df.columns)} features")
 
         # Loop through each target
         for i, target_column in enumerate(targets_df.columns):
-            if skip_existing and target_column in total_performance_df.index:
-                self.logger.info(f"Skipping {target_column} ({i+1}/{len(targets_df.columns)}): already processed")
+            self.logger.debug(f"Predicting target_column...")
+            target_column = str(target_column).strip()
+
+            if skip_existing and target_column in completed_targets:
+                self.logger.info(f"Skipping {target_column} ({i+1}/{len(targets_df.columns)})... already processed")
                 continue
+
+            exit
 
             if target_column.upper() == "SMILES":
                 self.logger.info(f"Skipping {target_column}: SMILES column detected")
@@ -392,16 +403,16 @@ class TL():
 
             self.logger.info(f"Processing target: {target_column} ({i+1}/{len(targets_df.columns)})")
 
-            current_target = targets_df[[target_column]]
+            current_target = targets_df[target_column]
             combined_data = pd.concat([features_df, current_target], axis=1, join="inner")
 
+                # Pull out the target as a Series
             y = combined_data[target_column]
-            mask = np.isfinite(y)
-            combined_data = combined_data.loc[mask].copy()
+            # Drop rows where target is missing
+            combined_data = combined_data.loc[y.notna()].copy()
 
             self.logger.info(f"  After removing non-finite values: {len(combined_data)} samples")
-
-            if combined_data[target_column].nunique() < 2:
+            if y.nunique() < 2:
                 self.logger.warning(f"  Skipping {target_column}: <2 unique values")
                 continue
 
@@ -521,7 +532,7 @@ class TL():
         with open(Path(save_path / f"{target_column}_performance_dict.json"), "w") as f:
             json.dump(performance_dict, f, indent=4)
 
-        feat_importance_df.to_csv(Path(save_path / f"{target_column}_feature_importance.csv"), index_label="ID")
+        feat_importance_df.to_csv(Path(save_path / f"{target_column}_feature_importance.csv"), index_label="Feature")
 
         return final_model, best_params, performance_dict, feat_importance_df
 
