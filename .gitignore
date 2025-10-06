@@ -1,3 +1,4 @@
+results/
 *.csv
 *.out
 *.log
@@ -5,3 +6,5 @@
 */__pycache/*
 *.zip
 *.xml
+*.png
+*.json
