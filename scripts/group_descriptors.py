@@ -27,7 +27,7 @@ def getRDKitGroups():
         "vsa_estate": [f"EState_VSA{i}" for i in range(1,11)],
         "vsa_vsaestate": [f"VSA_EState{i}" for i in range(1,11)],
         "vsa_logp": [f"SlogP_VSA{i}" for i in range(1,13)],
-        "vsa_mr": [f"SMR_VSA{i}" for i in range(1,11) if i != 8],
+        "vsa_mr": [f"SMR_VSA{i}" for i in range(1,11)],
 
         # --- Lipophilicity (non-VSA ones) ---
         "lipophilicity_basic": ["MolLogP","TPSA","MolMR"],
@@ -73,18 +73,29 @@ def getRDKitGroups():
         "druglikeness": ["qed"]
     }
 
-
+# %%
 def getMordredGroups():
-    """Return descriptor groups for Mordred descriptors (example placeholder)."""
-    return {
-        "constitutional": ["nAtom", "nHeavyAtom", "nRing", "nHetero"],
-        "topological": ["Diameter", "Radius", "PetitjeanNumber"],
-        "geometrical": ["GravitationalIndex", "RadiusOfGyration"],
-        "electronic": ["ATS0m", "ATS1e", "GATS1m"],
-        # add more Mordred-specific groups here
-    }
+    """Return descriptor groups for Mordred descriptors."""
+    from mordred import Calculator, descriptors
 
-def getGroups(source="rdkit"):
+    groups = {}
+
+    calc = Calculator(descriptors, ignore_3D=True)
+    ls = calc.descriptors
+
+    for desc in ls:
+        module = desc.__module__
+        module = module.split(".")[-1]
+        desc = str(desc).split(".")[-1]
+    
+        if module not in groups.keys():
+            groups[module] = []
+        groups.setdefault(module, []).append(desc)
+
+    return groups
+
+
+def getGroups(source):
     """Return descriptor groups depending on source."""
     if source.lower() == "rdkit":
         return getRDKitGroups()
@@ -92,3 +103,6 @@ def getGroups(source="rdkit"):
         return getMordredGroups()
     else:
         raise ValueError(f"Unknown source '{source}'. Choose 'rdkit' or 'mordred'.")
+
+getGroups(source="mordred")
+# %%

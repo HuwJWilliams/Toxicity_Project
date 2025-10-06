@@ -17,12 +17,16 @@ import json
 FILE_DIR = Path(__file__).resolve()
 PROJ_DIR = FILE_DIR.parents[2]
 DATASET_DIR = PROJ_DIR / "datasets"
-PALMERCHEM_SOFTWARE = Path.home() / "PalmerChem_Software" / "src" / "models"
+PALMERCHEM_SOFTWARE_MODELS = Path.home() / "PalmerChem_Software" / "src" / "models"
+PALMERCHEM_SOFTWARE_ANALYSIS = Path.home() / "PalmerChem_Software" / "src" / "analysis"
 LOG_DIR = PROJ_DIR / "scripts" / "models" / "logs"
-print(PALMERCHEM_SOFTWARE)
+print(PALMERCHEM_SOFTWARE_MODELS)
 
-sys.path.insert(0, str(PALMERCHEM_SOFTWARE))
+sys.path.insert(0, str(PALMERCHEM_SOFTWARE_MODELS))
 from RFRegressor import RFRegressor
+
+sys.path.insert(0, str(PALMERCHEM_SOFTWARE_ANALYSIS))
+from performance_calculation import calculatePerformance
 
 # ========== Constants ========== #
 tok_ls          = ["ibm/MoLFormer-XL-both-10pct", "DeepChem/ChemBERTa-100M-MLM"]
@@ -58,6 +62,7 @@ class TL():
         self.train_df = None
         self.test_df = None
         self.seed=seed
+        self.instantiated_model = None
 
         #===== Logger =====#
         self.logger = logging.getLogger(log_name)
@@ -474,11 +479,31 @@ class TL():
 
         return total_performance_df
 
+    def _rf_setup(
+            self,
+            random_seed=None,
+            cv_splits: int = 5,
+            log_level=logging.DEBUG,
+        ):
+        
+        if random_seed is None:
+            random_seed = self.rng()
+        
+        self.instantiated_model = RFRegressor(
+            cv_function=KFold,
+            hp_search_function=GridSearchCV,
+            cv_kwargs={"n_splits": cv_splits, "shuffle": True, "random_state": random_seed},
+            hp_search_kwargs={"cv": cv_splits, "scoring": "neg_mean_squared_error"},
+            log_level=log_level,
+            random_seed=random_seed
+        )
+
+        return self.instantiated_model
+        
     def trainSingleTargetRFModel(
         self,
         data: pd.DataFrame,
         target_column: str,
-        rf_regressor_class,
         hyper_params: dict =  {
                 "n_estimators": [400, 500],
                 "max_features": ["sqrt"],
@@ -499,17 +524,13 @@ class TL():
         save_path = Path(save_path)
         save_path.mkdir(parents=True, exist_ok=True)
 
-
-        rf_model = rf_regressor_class(
-            cv_function=KFold,
-            hp_search_function=GridSearchCV,
-            cv_kwargs={"n_splits": cv_splits, "shuffle": True, "random_state": random_seed},
-            hp_search_kwargs={"cv": cv_splits, "scoring": "neg_mean_squared_error"},
+        self._rf_setup(
+            random_seed=random_seed,
+            cv_splits=cv_splits,
             log_level=log_level,
-            random_seed=random_seed
         )
 
-        final_model, best_params, performance_dict, feat_importance_df = rf_model.trainRFRegressor(
+        final_model, best_params, performance_dict, feat_importance_df = self.instantiated_model.trainRFRegressor(
             n_resamples=n_resamples,
             data=data,
             target_column=target_column,
@@ -529,13 +550,57 @@ class TL():
         with open(Path(save_path / f"{target_column}_best_params.json"), "w") as f:
             json.dump(best_params, f, indent=4)
 
-        with open(Path(save_path / f"{target_column}_performance_dict.json"), "w") as f:
+        with open(Path(save_path / f"{target_column}_internal_performance_dict.json"), "w") as f:
             json.dump(performance_dict, f, indent=4)
 
         feat_importance_df.to_csv(Path(save_path / f"{target_column}_feature_importance.csv"), index_label="Feature")
 
         return final_model, best_params, performance_dict, feat_importance_df
 
+    def predictSingleTargetRF(
+            self,
+            model,
+            feature_data: pd.DataFrame,
+            prediction_col: str="LD50",
+            calc_perf: bool=False,
+            targets_true: pd.DataFrame=None,
+            save_preds: bool=False,
+            save_path: str=Path(FILE_DIR),
+            preds_filename:str="preds",
+            perf_filename:str="performance"
+    ):
+        
+        if not self.instantiated_model:
+            self.instantiated_model = RFRegressor(
+                cv_function=None, 
+                hp_search_function=None,
+                cv_kwargs={}, 
+                hp_search_kwargs={}
+                )
+            
+        targets_pred = self.instantiated_model.predictRFRegressor(
+                    feature_data=feature_data,
+                    prediction_col=prediction_col,
+                    final_rf=model,
+                    save_preds=save_preds,
+                    save_path=save_path,
+                    filename=preds_filename
+                )
+        if calc_perf:
+            targ_pred, targ_true, perf_dict = calculatePerformance(
+                targ_preds = targets_pred[prediction_col],
+                targ_true = targets_true[prediction_col],
+                logger = self.logger
+            )
+            if save_preds:
+                with open(save_path / f"{perf_filename}.json", "w") as f:
+                    json.dump(perf_dict, f, indent=4)
+        
+        else:
+            perf_dict = None
+
+        return targ_pred, targ_true, perf_dict
+    
 
     def runWorkflow(
             self,
